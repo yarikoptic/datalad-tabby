@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 from pathlib import Path
 from typing import (
     Dict,
@@ -84,7 +85,50 @@ def _load_tabby_single(
             # supporting two ways just adds unecessary complexity
             obj[key] = val if len(val) > 1 else val[0]
 
-    # TODO with jsonld==True, looks for a context, look for a frame
+    if not jsonld:
+        # early exist
+        return obj
+
+    ctx_fpath = _get_corresponding_context_fpath(src)
+    # TODO take built-in context instead of empty
+    ctx = {}
+    if ctx_fpath.exists():
+        custom_ctx = json.load(ctx_fpath.open())
+        # TODO report when redefinitions occur
+        ctx.update(custom_ctx)
+
+    if '@context' in obj:
+        # TODO report when redefinitions occur
+        obj['@context'].update(ctx)
+    else:
+        obj['@context'] = ctx
+
+    frame_fpath = _get_corresponding_frame_fpath(src)
+    frame = json.load(frame_fpath.open()) if frame_fpath.exists() else {}
+
+    if frame:
+        from pyld import jsonld
+        framed = jsonld.frame(
+            obj,
+            frame,
+            options=dict(
+                processingMode='json-ld-1.1',
+                #omitDefault=True,
+                #omitGraph=True,
+                #embed='@always',
+                #pruneBlankNodeIdentifiers='true',
+                expandContext=ctx if '@context' not in frame else None,
+            ),
+        )
+        obj = jsonld.compact(
+            framed,
+            ctx,
+            options=dict(
+                compactArrays=True,
+                graph=False,
+                processingMode='json-ld-1.1',
+            ),
+        )
     return obj
 
 
@@ -107,6 +151,14 @@ def _resolve_value(v: str, src_sheet_fpath: Path, jsonld: bool):
 def _get_corresponding_sheet_fpath(fpath: Path, sheet_name: str) -> Path:
     return fpath.parent / \
         f'{_get_tabby_prefix_from_sheet_fpath(fpath)}_{sheet_name}.tsv'
+
+
+def _get_corresponding_context_fpath(fpath: Path) -> Path:
+    return fpath.parent / f'{fpath.stem}.ctx.jsonld'
+
+
+def _get_corresponding_frame_fpath(fpath: Path) -> Path:
+    return fpath.parent / f'{fpath.stem}.frame.jsonld'
 
 
 def _get_tabby_prefix_from_sheet_fpath(fpath: Path) -> str:
